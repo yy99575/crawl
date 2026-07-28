@@ -1,0 +1,14 @@
+[project]
+name = "task-crawl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.14.3",
+    "asyncio>=4.0.0",
+    "beautifulsoup4>=4.15.0",
+    "lxml>=6.1.1",
+    "pymysql>=1.2.0",
+    "requests>=2.34.2",
+]
