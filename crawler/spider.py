@@ -3,6 +3,7 @@ import asyncio
 from bs4 import BeautifulSoup
 import config
 import re
+from db.movir_repostory import save_movies,get_pending_movies,update_movie_full,update_movie_status
 
 url = config.url
 headers = config.HEADERS
@@ -17,7 +18,7 @@ async def fetch(session, url, headers):
             print(f"请求失败，状态码：{response.status}")
             return None
 
-
+#解析html 大大多数字段都是在这里
 def parse_list_page(html):
     soup = BeautifulSoup(html, 'lxml')
     items = soup.select('.grid_view .item')
@@ -52,18 +53,18 @@ def parse_list_page(html):
         else:
             votes = None
 
-
         # 6. 导演/主演（第一段）
         director_elem = item.select_one('.bd p')
         if director_elem:
             full_text = director_elem.text.strip()
             lines = full_text.split('\n')
             director = lines[0].strip()
-
             # 年份和类型从第二行取
             if len(lines) > 1:
                 parts = lines[1].split('/')
-                release_year = parts[0].strip()
+                year_str = parts[0].strip()
+                match = re.search(r'\d{4}', year_str)
+                release_year = int(match.group()) if match else None
                 mv_type = parts[2].strip() if len(parts) > 2 else None
             else:
                 release_year = None
@@ -89,7 +90,7 @@ def parse_list_page(html):
             'release_year':release_year,
             'type': mv_type,
             'poster_url': poster_url,
-
+            'introduction': None
         }
         movies.append(movie)
 
@@ -98,34 +99,115 @@ def parse_list_page(html):
 
 #翻页
 async def crawl_all_pages(session):
+    semaphore = asyncio.Semaphore(config.CONCURRENCY)
     all_movies = []
     for page in range(0, 10):
         start = page * 25
         ping=f"{url}?start={start}"
-        html = await fetch(session, ping, headers)
+        async with semaphore:
+            html = await fetch(session, ping, headers)
        # print(f"第 {page + 1} 页 HTML 长度: {len(html) if html else 'None'}")
-        movies = parse_list_page(html)
+        if html:
+            movies = parse_list_page(html)
+        else:
+            print(f"{page+1}页面请求失败 跳过")
+            continue
         if movies:
             all_movies.extend(movies)
+           # brief_url=movies[0]['detail_url']
+            for movie in movies:
+                async  with semaphore:
+                    detail_html = await fetch(session, movie['detail_url'], headers)
+                await asyncio.sleep(2)#每请求完一个详情页都需要缓缓 防止被豆瓣封 0.3太短了 引起了429 素以需要增加延迟
+                if detail_html:
+                    intro = parse_intro_page(detail_html)
+                    movie['introduction'] = intro
+                else:
+                    movie['introduction'] = None
+                    '''
+                if intro:
+                    print(f"{movie['mv_title']}: {intro[:30]}...")
+                else:
+                    print(f" {movie['mv_title']}: 简介为空")
+                    '''
            #print(f"当前页第一条数据: {movies[0] if movies else '空'}")
             #print(f"当前已爬取 {len(all_movies)} 部电影")
         else:
             print("页面为空")
     return all_movies
 
+#解析简洁 需要跳转
+def parse_intro_page(html):
+    soup = BeautifulSoup(html, 'lxml')
+    intro_elem = soup.select_one('meta[property="og:description"]')
+    intro_text = intro_elem.get('content') if intro_elem else None
+    return intro_text
 
-async def main():
-    async with aiohttp.ClientSession() as session:
-        all_movies = await crawl_all_pages(session)
-        if all_movies:
-            print(f"\n✅ 共解析到 {len(all_movies)} 部电影")
-            for m in all_movies:
-                director = m['director'][:30] if m['director'] else '未知'
-                print(f"{m['rank']}. {m['mv_title']} | {m['score']}分 | "
-                      f"{director} |{m['poster_url']}")
+
+async def crawl_pending_movies(session):
+    """断点续爬：重新爬取所有 pending 或 failed 的电影"""
+    pending = get_pending_movies()  # 从数据库获取需要爬的列表
+
+    if not pending:
+        print("所有电影已爬完")
+        return []  # 返回空列表表示没有需要更新的
+
+    print(f" 需要续爬 {len(pending)} 部电影")
+    updated = []
+
+    for row in pending:
+        doubao_id = row[0]  # 取出 doubao_id
+        detail_url = f"https://movie.douban.com/subject/{doubao_id}/"
+
+        # 请求详情页
+        detail_html = await fetch(session, detail_url, headers)
+        await asyncio.sleep(2)  # 控制频率
+
+        if detail_html:
+            # 解析详情页所有字段
+            movie_data = parse_detail_page(detail_html, doubao_id)
+            if movie_data:
+                # 更新数据库（全量更新 + 状态改为 success）
+                update_movie_full(movie_data)
+                updated.append(doubao_id)
+                print(f"   {doubao_id} 已更新")
+            else:
+                # 解析失败，保持 pending 或改为 failed
+                update_movie_status(doubao_id, 'failed', '解析失败')
+                print(f"   {doubao_id} 解析失败")
         else:
-            print("获取页面失败")
+            # 请求失败，保持 pending 或改为 failed
+            update_movie_status(doubao_id, 'failed', '请求失败')
+            print(f"  {doubao_id} 请求失败")
+
+    return updated
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+def parse_detail_page(html, doubao_id):
+    """解析详情页所有字段"""
+    soup = BeautifulSoup(html, 'lxml')
+
+    # 从 meta 标签取
+    title_elem = soup.select_one('meta[property="og:title"]')
+    title = title_elem.get('content') if title_elem else None
+
+    score_elem = soup.select_one('.rating_num')
+    score = score_elem.text.strip() if score_elem else None
+
+    intro_elem = soup.select_one('meta[property="og:description"]')
+    intro = intro_elem.get('content') if intro_elem else None
+
+    poster_elem = soup.select_one('meta[property="og:image"]')
+    poster = poster_elem.get('content') if poster_elem else None
+
+    # 这些字段从列表页已经有了，但续爬时也要更新
+    # 如果详情页取不到，用数据库里的旧值
+    # 最好从数据库查出旧值，这里只更新能取到的
+
+    return {
+        'doubao_id': doubao_id,
+        'mv_title': title,
+        'score': score,
+        'introduction': intro,
+        'poster_url': poster
+    }
