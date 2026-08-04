@@ -8,7 +8,7 @@ from db.movir_repostory import save_movies,get_pending_movies,update_movie_full,
 url = config.url
 headers = config.HEADERS
 
-
+#异步请求
 async def fetch(session, url, headers):
     async with session.get(url, headers=headers) as response:
         if response.status == 200:
@@ -136,33 +136,27 @@ async def crawl_all_pages(session):
             print("页面为空")
     return all_movies
 
-#解析简洁 需要跳转
+#解析电影简介 需要跳转
 def parse_intro_page(html):
     soup = BeautifulSoup(html, 'lxml')
     intro_elem = soup.select_one('meta[property="og:description"]')
     intro_text = intro_elem.get('content') if intro_elem else None
     return intro_text
 
-
+ #断点续爬：重新爬取所有 pending 或 failed 的电影
 async def crawl_pending_movies(session):
-    """断点续爬：重新爬取所有 pending 或 failed 的电影"""
     pending = get_pending_movies()  # 从数据库获取需要爬的列表
-
     if not pending:
         print("所有电影已爬完")
         return []  # 返回空列表表示没有需要更新的
-
     print(f" 需要续爬 {len(pending)} 部电影")
     updated = []
-
     for row in pending:
         doubao_id = row[0]  # 取出 doubao_id
         detail_url = f"https://movie.douban.com/subject/{doubao_id}/"
-
         # 请求详情页
         detail_html = await fetch(session, detail_url, headers)
         await asyncio.sleep(2)  # 控制频率
-
         if detail_html:
             # 解析详情页所有字段
             movie_data = parse_detail_page(detail_html, doubao_id)
@@ -179,14 +173,11 @@ async def crawl_pending_movies(session):
             # 请求失败，保持 pending 或改为 failed
             update_movie_status(doubao_id, 'failed', '请求失败')
             print(f"  {doubao_id} 请求失败")
-
     return updated
 
-
+#解析详情页所有字段
 def parse_detail_page(html, doubao_id):
-    """解析详情页所有字段"""
     soup = BeautifulSoup(html, 'lxml')
-
     # 从 meta 标签取
     title_elem = soup.select_one('meta[property="og:title"]')
     title = title_elem.get('content') if title_elem else None
@@ -199,11 +190,9 @@ def parse_detail_page(html, doubao_id):
 
     poster_elem = soup.select_one('meta[property="og:image"]')
     poster = poster_elem.get('content') if poster_elem else None
-
     # 这些字段从列表页已经有了，但续爬时也要更新
     # 如果详情页取不到，用数据库里的旧值
     # 最好从数据库查出旧值，这里只更新能取到的
-
     return {
         'doubao_id': doubao_id,
         'mv_title': title,

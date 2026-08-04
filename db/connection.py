@@ -1,9 +1,6 @@
 import pymysql
-from urllib3 import connection
-
 import config
 
-import config
 DB=config.DB_CONFIG
 #数据库连接
 db_config={

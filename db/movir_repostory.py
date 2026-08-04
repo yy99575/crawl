@@ -1,12 +1,10 @@
-
 import pymysql
 from pymysql import MySQLError
 from db.connection import db_config
 
-#连接数据库
-
+#对数据进行全量存储
 def save_movies(all_movies):
-    conn = pymysql.connect(**db_config)
+    conn = pymysql.connect(**db_config)#连接数据库
     cursor = conn.cursor()  # 只需要用一个游标
     print(f"收到{len(all_movies)},准备导入到数据库中")
     for m in all_movies:
@@ -61,7 +59,9 @@ def save_movies(all_movies):
         print(f"更新crawl状态失败：{e}")
     cursor.close()#关闭游标
     conn.close()#关闭数据库
+
 #断点续爬
+# #pending 从来没爬过 failed 爬过但是失败 success爬过并且成功了
 def get_pending_movies():
     conn = pymysql.connect(**db_config)
     cursor = conn.cursor()
@@ -70,13 +70,11 @@ def get_pending_movies():
     results = cursor.fetchall()
     conn.close()
     return results
-#pending 从来没爬过 failed 爬过但是失败 success爬过并且成功了
 
+#"""全量更新电影数据"""
 def update_movie_full(movie_data):
-    """全量更新电影数据"""
     conn = pymysql.connect(**db_config)
     cursor = conn.cursor()
-
     # 在 SQL 外面构造 detail_url
     detail_url = f"https://movie.douban.com/subject/{movie_data['doubao_id']}/"
 
@@ -110,8 +108,8 @@ def update_movie_full(movie_data):
     conn.commit()
     conn.close()
 
+#更新电影状态"""
 def update_movie_status(doubao_id, status, error_msg=None):
-    """更新电影状态"""
     conn = pymysql.connect(**db_config)
     cursor = conn.cursor()
     if error_msg:
