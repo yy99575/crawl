@@ -121,4 +121,31 @@ def update_movie_status(doubao_id, status, error_msg=None):
     conn.commit()
     conn.close()
 
+#断电续爬的时候去查询以前的旧数据
+def get_movie_by_doubao_id(doubao_id):
+    conn = pymysql.connect(**db_config)
+    cursor = conn.cursor()
+    sql = "SELECT doubao_id FROM db_movies WHERE doubao_id = %s"
+    cursor.execute(sql, (doubao_id,))
+    results = cursor.fetchall()
+    conn.close()
+    return results
 
+
+def update_movie_merge(doubao_id, new_intro, new_poster):
+    """合并更新：只更新简介和海报，其他字段不变"""
+    conn = pymysql.connect(**db_config)
+    cursor = conn.cursor()
+
+    # 只更新简介和海报，状态改为 success
+    sql = """
+          UPDATE db_movies
+          SET introduction = %s,
+              poster_url   = %s,
+              crawl_status = 'success',
+              last_error   = NULL
+          WHERE doubao_id = %s \
+          """
+    cursor.execute(sql, (new_intro, new_poster, doubao_id))
+    conn.commit()
+    conn.close()

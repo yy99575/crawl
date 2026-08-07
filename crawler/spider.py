@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 import config
 import re
 from db.movir_repostory import save_movies,get_pending_movies,update_movie_full,update_movie_status
-
+from db.movir_repostory import update_movie_merge
 url = config.url
 headers = config.HEADERS
 
@@ -145,49 +145,53 @@ def parse_intro_page(html):
 
  #断点续爬：重新爬取所有 pending 或 failed 的电影
 async def crawl_pending_movies(session):
-    pending = get_pending_movies()  # 从数据库获取需要爬的列表
+    pending = get_pending_movies()
+
     if not pending:
-        print("所有电影已爬完")
-        return []  # 返回空列表表示没有需要更新的
-    print(f" 需要续爬 {len(pending)} 部电影")
+        print("所有电影已爬完，无需续爬")
+        return []
+
+    print(f"需要续爬 {len(pending)} 部电影")
     updated = []
-    for row in pending:
-        doubao_id = row[0]  # 取出 doubao_id
+
+    for idx, row in enumerate(pending, 1):
+        doubao_id = row[0]
         detail_url = f"https://movie.douban.com/subject/{doubao_id}/"
-        # 请求详情页
+
+        print(f"  [{idx}/{len(pending)}] 正在处理: {doubao_id}")
+
         detail_html = await fetch(session, detail_url, headers)
-        await asyncio.sleep(2)  # 控制频率
+        await asyncio.sleep(2)
         if detail_html:
-            # 解析详情页所有字段
             movie_data = parse_detail_page(detail_html, doubao_id)
-            if movie_data:
-                # 更新数据库（全量更新 + 状态改为 success）
-                update_movie_full(movie_data)
+            if movie_data and movie_data.get('introduction'):
+                # 只更新简介和海报，其他字段不变
+                update_movie_merge(
+                    doubao_id,
+                    movie_data['introduction'],
+                    movie_data['poster_url']
+                )
                 updated.append(doubao_id)
-                print(f"   {doubao_id} 已更新")
+                print(f"    {doubao_id} 简介已更新")
             else:
-                # 解析失败，保持 pending 或改为 failed
-                update_movie_status(doubao_id, 'failed', '解析失败')
-                print(f"   {doubao_id} 解析失败")
+                # 简介没取到，只更新状态（保留原数据）
+                update_movie_status(doubao_id, 'success', '续爬成功但简介为空')
+                updated.append(doubao_id)
+                print(f"     {doubao_id} 简介为空，仅更新状态")
         else:
-            # 请求失败，保持 pending 或改为 failed
+            # 请求失败，保持 failed
             update_movie_status(doubao_id, 'failed', '请求失败')
-            print(f"  {doubao_id} 请求失败")
+            print(f"    {doubao_id} 请求失败")
+
+    print(f" 续爬完成，成功更新 {len(updated)} 部电影")
     return updated
 
-#解析详情页所有字段
+#解析详情页的简介和海报
 def parse_detail_page(html, doubao_id):
     soup = BeautifulSoup(html, 'lxml')
     # 从 meta 标签取
-    title_elem = soup.select_one('meta[property="og:title"]')
-    title = title_elem.get('content') if title_elem else None
-
-    score_elem = soup.select_one('.rating_num')
-    score = score_elem.text.strip() if score_elem else None
-
     intro_elem = soup.select_one('meta[property="og:description"]')
     intro = intro_elem.get('content') if intro_elem else None
-
     poster_elem = soup.select_one('meta[property="og:image"]')
     poster = poster_elem.get('content') if poster_elem else None
     # 这些字段从列表页已经有了，但续爬时也要更新
@@ -195,8 +199,6 @@ def parse_detail_page(html, doubao_id):
     # 最好从数据库查出旧值，这里只更新能取到的
     return {
         'doubao_id': doubao_id,
-        'mv_title': title,
-        'score': score,
         'introduction': intro,
         'poster_url': poster
     }

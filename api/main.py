@@ -6,7 +6,6 @@ import pymysql
 
 app = FastAPI()#创建一个fastapi实例
 #定义根路径的get路由
-
 #允许前端跨域请求
 app.add_middleware(
     CORSMiddleware,

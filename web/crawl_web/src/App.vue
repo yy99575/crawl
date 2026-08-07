@@ -55,7 +55,8 @@
       <button @click="page_add" :disabled="page >= totalPages">下一页</button>
        <input type="number" v-model.number="page" :max="totalPages" :min="1" @change="fetchMovies()" style="width: 60px; margin-left: 10px;" />
     </div>
-    <p v-if="total == 0" class="loading">加载中...</p>
+    <p v-if="loading" class="loading">加载中...</p>
+    <p v-else-if="total === 0" class="empty">暂无电影数据，请先运行爬虫</p>
     <p class="total">总共 {{ total }} 条数据</p>
   </div>
 </template>
@@ -73,7 +74,8 @@ export default {
       //页的大小
       page:1,
       page_size:10,
-      totalPages: 0
+      totalPages: 0,
+      loading: false //qing状态，初始为true，表示正在加载数据
     }
   },
   mounted() {
@@ -82,12 +84,14 @@ export default {
   },
   methods: {
     async fetchMovies() {
+        this.loading = true;//请求前打开
       try {
         //多传两个参数 页数和页大小
         const url = `http://localhost:8000/movies?sort_by=${this.sortBy}&order=${this.order}&page=${this.page}&page_size=${this.page_size}`
         console.log('请求地址', url);
         const res = await fetch(url);
         const data = await res.json();
+        
         if (data.items) {
           this.movies = data.items;
           this.total = data.total;
@@ -96,10 +100,13 @@ export default {
            this.totalPages = Math.ceil(this.total / this.page_size);
         } else if (data.error) {
           console.error('后端出错:', data.error);
+  
         }
       } catch (err) {
         console.error('请求失败:', err);
         alert('请求失败，请检查后端服务是否启动');
+      }finally {
+        this.loading = false; //请求结束关闭
       }
     },
     page_del(){
@@ -298,5 +305,11 @@ img:hover {
 }
 .pagination input:focus {
   border-color: #2b3253;
+}
+.empty {
+  text-align: center;
+  font-size: 29px;
+  color: #0c0000;
+  padding: 30px;
 }
 </style>
